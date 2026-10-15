@@ -23,6 +23,10 @@ extra-doc-files:
 
 extra-source-files:
   cbits/blst_util.h
+  cbits/falcon/config.h
+  cbits/falcon/falcon.h
+  cbits/falcon/fpr.h
+  cbits/falcon/inner.h
 
 data-files:
   bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors
@@ -151,7 +155,19 @@ library
     libblst >=0.3.14,
     libsodium,
 
-  c-sources: cbits/blst_util.c
+  c-sources:
+    cbits/blst_util.c
+    cbits/falcon/codec.c
+    cbits/falcon/common.c
+    cbits/falcon/falcon.c
+    cbits/falcon/fft.c
+    cbits/falcon/fpr.c
+    cbits/falcon/keygen.c
+    cbits/falcon/rng.c
+    cbits/falcon/shake.c
+    cbits/falcon/sign.c
+    cbits/falcon/vrfy.c
+
   include-dirs: cbits
 
   if flag(secp256k1-support)
