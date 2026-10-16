@@ -12,3 +12,36 @@ Copyright 2019-2021 Input Output (Hong Kong) Ltd.
    See the License for the specific language governing permissions and
    limitations under the License.
 
+
+This package additionally contains C code vendored from algorand/falcon
+(https://github.com/algorand/falcon, commit
+19f185792c39326bebc173b2a100c2c247423be3) in cbits/falcon: the Falcon
+reference implementation by the Falcon Project (main code by Thomas
+Pornin), extended by Algorand, Inc. with a deterministic signing mode
+(written by David Lazar, with input from Chris Peikert and others from
+Algorand). It is distributed under the MIT License, as stated in the
+README.txt of that repository and reproduced below. Most vendored files
+also carry this notice in their headers; cbits/falcon/deterministic.h and
+cbits/falcon/deterministic512.c do not and are covered by this notice.
+
+   Copyright (c) 2017-2020  Falcon Project
+
+   Permission is hereby granted, free of charge, to any person obtaining
+   a copy of this software and associated documentation files (the
+   "Software"), to deal in the Software without restriction, including
+   without limitation the rights to use, copy, modify, merge, publish,
+   distribute, sublicense, and/or sell copies of the Software, and to
+   permit persons to whom the Software is furnished to do so, subject to
+   the following conditions:
+
+   The above copyright notice and this permission notice shall be
+   included in all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
