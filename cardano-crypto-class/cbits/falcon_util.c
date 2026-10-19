@@ -82,3 +82,55 @@ int cardano_falcon_det512_derive_pubkey(const uint8_t *privkey, uint8_t *pubkey)
   sodium_memzero(tmp, sizeof tmp);
   return r;
 }
+
+/*
+ * Sign a message with a Falcon-det512 private key, producing a signature in
+ * the fixed-size CT format.
+ *
+ * The deterministic Falcon specification has a single signing path, which
+ * produces the variable-length compressed format; there is no deterministic
+ * CT signing function. The compressed signature is therefore converted to CT,
+ * a lossless re-encoding of the same signature (this is also how the CT
+ * known-answer tests of algorand/falcon are produced). The caller provides
+ * privkey (CARDANO_FALCON_DET512_PRIVKEY_SIZE bytes), msg (msg_len bytes) and
+ * sig (CARDANO_FALCON_DET512_SIG_SIZE bytes). As for key generation, the
+ * secret-dependent scratch memory inside the vendored signing function is not
+ * wiped.
+ *
+ * Returns CARDANO_FALCON_SUCCESS, or a negative CARDANO_FALCON_ERR_* code.
+ */
+int cardano_falcon_det512_sign(const uint8_t *privkey,
+                               const uint8_t *msg, size_t msg_len,
+                               uint8_t *sig)
+{
+  uint8_t sig_compressed[FALCON_DET512_SIG_COMPRESSED_MAXSIZE];
+  size_t sig_compressed_len = sizeof sig_compressed;
+  int r = falcon_det512_sign_compressed(sig_compressed, &sig_compressed_len,
+                                        privkey, msg, msg_len);
+  if (r != 0) {
+    return r;
+  }
+  return falcon_det512_convert_compressed_to_ct(sig, sig_compressed,
+                                                sig_compressed_len);
+}
+
+/*
+ * Verify a Falcon-det512 signature in CT format.
+ *
+ * falcon_det512_verify_ct checks the header byte, then rebuilds the salt from
+ * whatever salt version the signature carries. Only the salt version defined
+ * by the current specification is accepted here, as Algorand does. The caller
+ * provides sig (CARDANO_FALCON_DET512_SIG_SIZE bytes), pubkey
+ * (CARDANO_FALCON_DET512_PUBKEY_SIZE bytes) and msg (msg_len bytes).
+ *
+ * Returns CARDANO_FALCON_SUCCESS if the signature is valid, or a negative
+ * CARDANO_FALCON_ERR_* code.
+ */
+int cardano_falcon_det512_verify(const uint8_t *sig, const uint8_t *pubkey,
+                                 const uint8_t *msg, size_t msg_len)
+{
+  if (falcon_det512_get_salt_version(sig) != FALCON_DET512_CURRENT_SALT_VERSION) {
+    return CARDANO_FALCON_ERR_BADSIG;
+  }
+  return falcon_det512_verify_ct(sig, pubkey, msg, msg_len);
+}
