@@ -8,6 +8,7 @@ import qualified Test.Crypto.DSIGN
 import qualified Test.Crypto.Hash
 import qualified Test.Crypto.KES
 import qualified Test.Crypto.Regressions
+import qualified Test.Crypto.Vector.FalconDSIGN
 #ifdef SECP256K1_ENABLED
 import qualified Test.Crypto.Vector.Secp256k1DSIGN
 #endif
@@ -39,6 +40,7 @@ tests mlockLock =
       Test.Crypto.Hash.tests mlockLock
       Test.Crypto.KES.tests mlockLock
       Test.Crypto.Regressions.tests
+      Test.Crypto.Vector.FalconDSIGN.tests
 #ifdef SECP256K1_ENABLED
       Test.Crypto.Vector.Secp256k1DSIGN.tests
 #endif

@@ -210,6 +210,7 @@ library testlib
     Test.Crypto.Regressions
     Test.Crypto.RunIO
     Test.Crypto.Util
+    Test.Crypto.Vector.FalconDSIGN
     Test.Crypto.Vector.SerializationUtils
 
   other-modules: Paths_cardano_crypto_class
@@ -236,6 +237,7 @@ library testlib
     nothunks,
     pretty-show,
     quickcheck-instances,
+    ram,
     reflection,
     vector,
 
