@@ -53,6 +53,7 @@ import Cardano.Crypto.DSIGN (
   MockDSIGN,
   Ed25519DSIGN,
   Ed448DSIGN,
+  FalconDet512DSIGN,
   aggregateVerKeysDSIGN,
   seedSizeDSIGN,
 
@@ -184,14 +185,17 @@ tests :: Lock -> Spec
 tests lock =
   describe "Crypto.DSIGN" $ do
      describe "Pure" $ do
-       testDSIGNAlgorithm (Proxy @MockDSIGN) (arbitrary @Message) "MockDSIGN"
-       testDSIGNAlgorithm (Proxy @Ed25519DSIGN) (arbitrary @Message) "Ed25519DSIGN"
-       testDSIGNAlgorithm (Proxy @Ed448DSIGN) (arbitrary @Message) "Ed448DSIGN"
-       testDSIGNAlgorithmWithContext (Proxy @BLS12381MinVerKeyDSIGN) True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinVerKeyDSIGN"
-       testDSIGNAlgorithmWithContext (Proxy @BLS12381MinSigDSIGN) True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinSigDSIGN"
+       testEnough $ testDSIGNAlgorithm (Proxy @MockDSIGN) (arbitrary @Message) "MockDSIGN"
+       testEnough $ testDSIGNAlgorithm (Proxy @Ed25519DSIGN) (arbitrary @Message) "Ed25519DSIGN"
+       testEnough $ testDSIGNAlgorithm (Proxy @Ed448DSIGN) (arbitrary @Message) "Ed448DSIGN"
+       testEnough $ testDSIGNAlgorithmWithContext (Proxy @BLS12381MinVerKeyDSIGN) True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinVerKeyDSIGN"
+       testEnough $ testDSIGNAlgorithmWithContext (Proxy @BLS12381MinSigDSIGN) True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinSigDSIGN"
+       -- Falcon's key generation is slow (~6 ms), so it keeps the floor of
+       -- 1,000 runs set in test/Main.hs instead of testEnough.
+       testDSIGNAlgorithm (Proxy @FalconDet512DSIGN) (arbitrary @Message) "FalconDet512DSIGN"
 #ifdef SECP256K1_ENABLED
-       testDSIGNAlgorithm (Proxy @EcdsaSecp256k1DSIGN) genEcdsaMsg "EcdsaSecp256k1DSIGN"
-       testDSIGNAlgorithm (Proxy @SchnorrSecp256k1DSIGN) (arbitrary @Message) "SchnorrSecp256k1DSIGN"
+       testEnough $ testDSIGNAlgorithm (Proxy @EcdsaSecp256k1DSIGN) genEcdsaMsg "EcdsaSecp256k1DSIGN"
+       testEnough $ testDSIGNAlgorithm (Proxy @SchnorrSecp256k1DSIGN) (arbitrary @Message) "SchnorrSecp256k1DSIGN"
        -- Specific tests related only to ecdsa
        testEcdsaInvalidMessageHash "EcdsaSecp256k1InvalidMessageHash"
        testEcdsaWithHashAlgorithm (Proxy @SHA3_256) "EcdsaSecp256k1WithSHA3_256"
@@ -269,7 +273,7 @@ testDSIGNAlgorithmWithContext :: forall (v :: Type) (a :: Type).
   Gen a ->
   String ->
   Spec
-testDSIGNAlgorithmWithContext proxy ctxMatters genContext genKeyCtx genMsg name = testEnough . describe name $ do
+testDSIGNAlgorithmWithContext proxy ctxMatters genContext genKeyCtx genMsg name = describe name $ do
   when ctxMatters $
     describe "keygen context" $ do
       prop "same seed, different keygen contexts results in different ver keys" $
