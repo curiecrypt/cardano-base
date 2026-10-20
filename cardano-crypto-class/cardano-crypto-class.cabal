@@ -36,6 +36,7 @@ data-files:
   bls12-381-test-vectors/test_vectors/h2c_large_dst
   bls12-381-test-vectors/test_vectors/pairing_test_vectors
   bls12-381-test-vectors/test_vectors/serde_test_vectors
+  falcon-det512-test-vectors/test_vectors/kat_ct
 
 flag secp256k1-support
   description:
