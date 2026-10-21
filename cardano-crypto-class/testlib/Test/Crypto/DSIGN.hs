@@ -45,6 +45,8 @@ import qualified Test.QuickCheck.Gen as Gen
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Maybe (fromJust)
+import Data.Bits (complementBit, (.|.))
+import Data.Word (Word8)
 
 import Control.Exception (evaluate, bracket)
 import Control.Monad (replicateM, when)
@@ -193,6 +195,8 @@ tests lock =
        -- Falcon's key generation is slow (~6 ms), so it keeps the floor of
        -- 1,000 runs set in test/Main.hs instead of testEnough.
        testDSIGNAlgorithm (Proxy @FalconDet512DSIGN) (arbitrary @Message) "FalconDet512DSIGN"
+       -- Specific tests related only to Falcon
+       testFalconRejectsMalformed "FalconDet512DSIGNRejectsMalformed"
 #ifdef SECP256K1_ENABLED
        testEnough $ testDSIGNAlgorithm (Proxy @EcdsaSecp256k1DSIGN) genEcdsaMsg "EcdsaSecp256k1DSIGN"
        testEnough $ testDSIGNAlgorithm (Proxy @SchnorrSecp256k1DSIGN) (arbitrary @Message) "SchnorrSecp256k1DSIGN"
@@ -748,6 +752,39 @@ testEcdsaWithHashAlgorithm _ name = testEnough . describe name $ do
     genContext = pure ()
 
 #endif
+
+-- Falcon-specific: decoding only checks the length (as for Ed25519), so
+-- verification must reject malformed signatures and verification keys.
+testFalconRejectsMalformed :: String -> Spec
+testFalconRejectsMalformed name = describe name $ do
+  prop "signature with one bit flipped" .
+    forAllShow ((,,) <$> arbitrary @Message <*> defaultSignKeyGen @FalconDet512DSIGN <*> Gen.choose (0, 8 * sigSize - 1)) ppShow $
+      \(msg, sk, i) ->
+        let sig = onRawBytes (modifyByte (i `div` 8) (`complementBit` (i `mod` 8))) (signDSIGN () msg sk)
+         in verifyDSIGN () (deriveVerKeyDSIGN sk) msg sig =/= Right ()
+  prop "signature with a salt version other than 0" .
+    forAllShow ((,,) <$> arbitrary @Message <*> defaultSignKeyGen @FalconDet512DSIGN <*> Gen.choose (1, 255)) ppShow $
+      \(msg, sk, version) ->
+        let sig = onRawBytes (modifyByte 1 (const version)) (signDSIGN () msg sk)
+         in verifyDSIGN () (deriveVerKeyDSIGN sk) msg sig =/= Right ()
+  prop "verification key with a coefficient >= q" .
+    forAllShow ((,) <$> arbitrary @Message <*> defaultSignKeyGen @FalconDet512DSIGN) ppShow $
+      \(msg, sk) ->
+        -- After the header byte, each coefficient takes 14 bits. Setting the
+        -- first 14 bits to one gives 16383, above q = 12289.
+        let vk = onRawBytes (modifyByte 2 (.|. 0xFC) . modifyByte 1 (const 0xFF)) (deriveVerKeyDSIGN sk)
+         in verifyDSIGN () vk msg (signDSIGN () msg sk) =/= Right ()
+  where
+    sigSize = fromIntegral @Word @Int (fixedSize (Proxy @(SigDSIGN FalconDet512DSIGN)))
+
+-- | Change the raw bytes of a value. Decoding only checks the length, so it
+-- succeeds here.
+onRawBytes :: FixedSizeCodec a => (BS.ByteString -> BS.ByteString) -> a -> a
+onRawBytes f = fromJust . rawDecodeFixedSized . f . rawEncodeFixedSized
+
+-- | Change byte @i@ of a bytestring.
+modifyByte :: Int -> (Word8 -> Word8) -> BS.ByteString -> BS.ByteString
+modifyByte i f bs = BS.take i bs <> BS.singleton (f (BS.index bs i)) <> BS.drop (i + 1) bs
 
 prop_dsignm_verify_neg_msg
   :: forall v. (DSIGNMAlgorithm v, ContextDSIGN v ~ (), Signable v Message)
