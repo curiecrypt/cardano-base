@@ -73,6 +73,7 @@ library
     Cardano.Crypto.DSIGN.Class
     Cardano.Crypto.DSIGN.Ed25519
     Cardano.Crypto.DSIGN.Ed448
+    Cardano.Crypto.DSIGN.Falcon
     Cardano.Crypto.DSIGN.Mock
     Cardano.Crypto.DSIGN.NeverUsed
     Cardano.Crypto.DirectSerialise
