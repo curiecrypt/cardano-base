@@ -78,6 +78,7 @@ library
     Cardano.Crypto.DirectSerialise
     Cardano.Crypto.EllipticCurve.BLS12_381
     Cardano.Crypto.EllipticCurve.BLS12_381.Internal
+    Cardano.Crypto.Falcon.Internal
     Cardano.Crypto.Hash
     Cardano.Crypto.Hash.Blake2b
     Cardano.Crypto.Hash.Class
