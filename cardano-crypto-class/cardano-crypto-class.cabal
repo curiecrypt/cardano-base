@@ -27,6 +27,7 @@ extra-source-files:
   cbits/falcon/falcon.h
   cbits/falcon/fpr.h
   cbits/falcon/inner.h
+  cbits/falcon_util.h
 
 data-files:
   bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors
@@ -167,7 +168,11 @@ library
     cbits/falcon/shake.c
     cbits/falcon/sign.c
     cbits/falcon/vrfy.c
+    cbits/falcon_util.c
 
+  -- Emulated floating point keeps Falcon signatures bit-identical across
+  -- platforms; cbits/falcon_util.c refuses to build without it.
+  cc-options: -DFALCON_FPEMU=1
   include-dirs: cbits
 
   if flag(secp256k1-support)
