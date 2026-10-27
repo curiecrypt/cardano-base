@@ -26,6 +26,7 @@ import Test.QuickCheck (
   Property,
   Testable,
   forAllShow,
+  property,
   ioProperty,
   counterexample,
   )
@@ -45,6 +46,8 @@ import qualified Test.QuickCheck.Gen as Gen
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Maybe (fromJust)
+import Data.Bits (complementBit)
+import Data.Word (Word8)
 
 import Control.Exception (evaluate, bracket)
 import Control.Monad (replicateM, when)
@@ -53,6 +56,7 @@ import Cardano.Crypto.DSIGN (
   MockDSIGN,
   Ed25519DSIGN,
   Ed448DSIGN,
+  Falcon512DSIGN,
   aggregateVerKeysDSIGN,
   seedSizeDSIGN,
 
@@ -172,7 +176,11 @@ defaultPossessionProofGen genKeyCtx = do
 -- Used for adjusting no of quick check tests
 -- By default up to 100 tests are performed which may not be enough to catch hidden bugs
 testEnough :: Spec -> Spec
-testEnough = modifyMaxSuccess (max 10_000)
+testEnough = testAtLeast 10_000
+
+-- | Run each property at least this many times.
+testAtLeast :: Int -> Spec -> Spec
+testAtLeast n = modifyMaxSuccess (max n)
 
 {- HLINT ignore "Use <$>" -}
 {- HLINT ignore "Reduce duplication" -}
@@ -187,8 +195,12 @@ tests lock =
        testDSIGNAlgorithm (Proxy @MockDSIGN) (arbitrary @Message) "MockDSIGN"
        testDSIGNAlgorithm (Proxy @Ed25519DSIGN) (arbitrary @Message) "Ed25519DSIGN"
        testDSIGNAlgorithm (Proxy @Ed448DSIGN) (arbitrary @Message) "Ed448DSIGN"
-       testDSIGNAlgorithmWithContext (Proxy @BLS12381MinVerKeyDSIGN) True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinVerKeyDSIGN"
-       testDSIGNAlgorithmWithContext (Proxy @BLS12381MinSigDSIGN) True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinSigDSIGN"
+       testDSIGNAlgorithmWithContext (Proxy @BLS12381MinVerKeyDSIGN) 10_000 True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinVerKeyDSIGN"
+       testDSIGNAlgorithmWithContext (Proxy @BLS12381MinSigDSIGN) 10_000 True (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinSigDSIGN"
+       -- Falcon key generation and signing take milliseconds, so Falcon runs
+       -- at the 1,000 floor set in test/Main.hs instead of 10,000.
+       testDSIGNAlgorithmWithContext (Proxy @Falcon512DSIGN) 1_000 False (pure ()) (pure ()) (arbitrary @Message) "Falcon512DSIGN"
+       testFalcon512 "Falcon512DSIGN specific"
 #ifdef SECP256K1_ENABLED
        testDSIGNAlgorithm (Proxy @EcdsaSecp256k1DSIGN) genEcdsaMsg "EcdsaSecp256k1DSIGN"
        testDSIGNAlgorithm (Proxy @SchnorrSecp256k1DSIGN) (arbitrary @Message) "SchnorrSecp256k1DSIGN"
@@ -263,13 +275,14 @@ testDSIGNAlgorithmWithContext :: forall (v :: Type) (a :: Type).
    ToCBOR (SigDSIGN v),
    FromCBOR (SigDSIGN v)) =>
   Proxy v ->
+  Int ->
   Bool ->
   Gen (ContextDSIGN v) ->
   Gen (KeyGenContextDSIGN v) ->
   Gen a ->
   String ->
   Spec
-testDSIGNAlgorithmWithContext proxy ctxMatters genContext genKeyCtx genMsg name = testEnough . describe name $ do
+testDSIGNAlgorithmWithContext proxy minRuns ctxMatters genContext genKeyCtx genMsg name = testAtLeast minRuns . describe name $ do
   when ctxMatters $
     describe "keygen context" $ do
       prop "same seed, different keygen contexts results in different ver keys" $
@@ -404,7 +417,7 @@ testDSIGNAlgorithm :: forall v a.
   Gen a ->
   String ->
   Spec
-testDSIGNAlgorithm proxy = testDSIGNAlgorithmWithContext @v proxy False (pure ()) (pure ())
+testDSIGNAlgorithm proxy = testDSIGNAlgorithmWithContext @v proxy 10_000 False (pure ()) (pure ())
 
 
 testDSIGNMAlgorithm
@@ -744,6 +757,54 @@ testEcdsaWithHashAlgorithm _ name = testEnough . describe name $ do
     genContext = pure ()
 
 #endif
+
+-- Falcon-specific: decoding checks the header byte, verification must reject
+-- any other change, and signing must be deterministic.
+testFalcon512 :: String -> Spec
+testFalcon512 name = describe name $ do
+  describe "decoding rejects a wrong header byte" $ do
+    prop "VerKey" .
+      forAllShow ((,) <$> genVerKey <*> genOtherByte 0x09) ppShow $ \(vk, b) ->
+        rawDecodeFixedSized @(VerKeyDSIGN Falcon512DSIGN) (setByte 0 b (rawEncodeFixedSized vk)) === Nothing
+    prop "SignKey" .
+      forAllShow ((,) <$> genSignKey <*> genOtherByte 0x59) ppShow $ \(sk, b) ->
+        rawDecodeFixedSized @(SignKeyDSIGN Falcon512DSIGN) (setByte 0 b (rawEncodeFixedSized sk)) === Nothing
+    prop "Sig" .
+      forAllShow ((,,) <$> genSignKey <*> arbitrary @Message <*> genOtherByte 0x39) ppShow $ \(sk, msg, b) ->
+        rawDecodeFixedSized @(SigDSIGN Falcon512DSIGN) (setByte 0 b (rawEncodeFixedSized (signDSIGN () msg sk))) === Nothing
+  describe "a flipped bit is never accepted" $ do
+    prop "in the signature" .
+      forAllShow ((,,) <$> genSignKey <*> arbitrary @Message <*> genBit sigBytes) ppShow $ \(sk, msg, i) ->
+        case rawDecodeFixedSized (flipBit i (rawEncodeFixedSized (signDSIGN () msg sk))) of
+          Nothing -> property True
+          Just sig -> verifyDSIGN () (deriveVerKeyDSIGN sk) msg sig =/= Right ()
+    prop "in the verification key" .
+      forAllShow ((,,) <$> genSignKey <*> arbitrary @Message <*> genBit vkBytes) ppShow $ \(sk, msg, i) ->
+        case rawDecodeFixedSized (flipBit i (rawEncodeFixedSized (deriveVerKeyDSIGN sk))) of
+          Nothing -> property True
+          Just vk -> verifyDSIGN () vk msg (signDSIGN () msg sk) =/= Right ()
+  prop "signing is deterministic" .
+    forAllShow ((,) <$> genSignKey <*> arbitrary @Message) ppShow $ \(sk, msg) ->
+      -- A decoded copy of the key, so GHC cannot share the two signDSIGN calls.
+      let sk' = fromJust (rawDecodeFixedSized (rawEncodeFixedSized sk))
+       in signDSIGN () msg sk === signDSIGN () msg sk'
+  where
+    genSignKey = defaultSignKeyGen @Falcon512DSIGN
+    genVerKey = deriveVerKeyDSIGN <$> genSignKey
+    genOtherByte :: Word8 -> Gen Word8
+    genOtherByte b = Gen.suchThat arbitrary (/= b)
+    genBit :: Word -> Gen Int
+    genBit size = Gen.choose (0, 8 * fromIntegral size - 1)
+    vkBytes = fixedSize (Proxy @(VerKeyDSIGN Falcon512DSIGN))
+    sigBytes = fixedSize (Proxy @(SigDSIGN Falcon512DSIGN))
+
+-- | Replace byte @i@ of a bytestring.
+setByte :: Int -> Word8 -> BS.ByteString -> BS.ByteString
+setByte i b bs = BS.take i bs <> BS.singleton b <> BS.drop (i + 1) bs
+
+-- | Flip bit @i@ of a bytestring, counting from the first byte.
+flipBit :: Int -> BS.ByteString -> BS.ByteString
+flipBit i bs = setByte (i `div` 8) (complementBit (BS.index bs (i `div` 8)) (i `mod` 8)) bs
 
 prop_dsignm_verify_neg_msg
   :: forall v. (DSIGNMAlgorithm v, ContextDSIGN v ~ (), Signable v Message)
