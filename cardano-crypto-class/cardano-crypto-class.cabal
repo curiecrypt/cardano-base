@@ -203,6 +203,8 @@ library testlib
     Test.Crypto.Regressions
     Test.Crypto.RunIO
     Test.Crypto.Util
+    Test.Crypto.Vector.Falcon512DSIGN
+    Test.Crypto.Vector.Falcon512Vectors
     Test.Crypto.Vector.SerializationUtils
 
   other-modules: Paths_cardano_crypto_class
