@@ -783,6 +783,18 @@ testFalcon512 name = describe name $ do
         case rawDecodeFixedSized (flipBit i (rawEncodeFixedSized (deriveVerKeyDSIGN sk))) of
           Nothing -> property True
           Just vk -> verifyDSIGN () vk msg (signDSIGN () msg sk) =/= Right ()
+  describe "decoding rejects degenerate signing keys" $ do
+    -- Header and length are right, and make_public accepts this key, but
+    -- f G - g F = 0: signing with it loops forever.
+    it "header, 0x04, then zeros" $
+      rawDecodeFixedSized @(SignKeyDSIGN Falcon512DSIGN) (degenerateSignKey 0x04) `shouldBe` Nothing
+    it "header, then zeros" $
+      rawDecodeFixedSized @(SignKeyDSIGN Falcon512DSIGN) (degenerateSignKey 0x00) `shouldBe` Nothing
+    prop "a signing key with a flipped bit is rejected or signs" .
+      forAllShow ((,,) <$> genSignKey <*> arbitrary @Message <*> genBit skBytes) ppShow $ \(sk, msg, i) ->
+        case rawDecodeFixedSized @(SignKeyDSIGN Falcon512DSIGN) (flipBit i (rawEncodeFixedSized sk)) of
+          Nothing -> property True
+          Just sk' -> verifyDSIGN () (deriveVerKeyDSIGN sk') msg (signDSIGN () msg sk') === Right ()
   prop "signing is deterministic" .
     forAllShow ((,) <$> genSignKey <*> arbitrary @Message) ppShow $ \(sk, msg) ->
       -- A decoded copy of the key, so GHC cannot share the two signDSIGN calls.
@@ -796,7 +808,10 @@ testFalcon512 name = describe name $ do
     genBit :: Word -> Gen Int
     genBit size = Gen.choose (0, 8 * fromIntegral size - 1)
     vkBytes = fixedSize (Proxy @(VerKeyDSIGN Falcon512DSIGN))
+    skBytes = fixedSize (Proxy @(SignKeyDSIGN Falcon512DSIGN))
     sigBytes = fixedSize (Proxy @(SigDSIGN Falcon512DSIGN))
+    degenerateSignKey :: Word8 -> BS.ByteString
+    degenerateSignKey b = BS.pack [0x59, b] <> BS.replicate (fromIntegral skBytes - 2) 0
 
 -- | Replace byte @i@ of a bytestring.
 setByte :: Int -> Word8 -> BS.ByteString -> BS.ByteString

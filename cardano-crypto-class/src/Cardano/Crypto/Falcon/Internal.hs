@@ -33,6 +33,7 @@ module Cardano.Crypto.Falcon.Internal (
   c_falcon512_make_public,
   c_falcon512_sign,
   c_falcon512_verify,
+  c_falcon512_check_private,
 ) where
 
 #include "falcon_util.h"
@@ -103,4 +104,13 @@ foreign import ccall unsafe "cardano_falcon512_verify"
     Ptr Word8 ->
     CSize ->
     SizedPtr FalconTmpVerifySize ->
+    IO CInt
+
+-- | @c_falcon512_check_private sk tmp@: 0 if the private key is one Falcon key
+-- generation could have produced. Takes about 0.4 ms. Wipes @tmp@ before
+-- returning.
+foreign import ccall unsafe "cardano_falcon512_check_private"
+  c_falcon512_check_private ::
+    SizedPtr FalconPrivKeySize ->
+    SizedPtr FalconTmpKeygenSize ->
     IO CInt

@@ -23,8 +23,9 @@
 --   in @cbits/falcon_util.c@; this derandomization is a choice of this binding,
 --   not part of the Falcon specification.
 -- * Decoding checks the length and the one-byte Falcon header of keys and
---   signatures. Deeper validity (coefficient ranges, key consistency) is checked
---   when a key or signature is used.
+--   signatures. Signing keys are also checked in full (@cardano_falcon512_check_private@):
+--   a degenerate key would make signing loop forever. Deeper validity of
+--   verification keys and signatures is checked when they are used.
 module Cardano.Crypto.DSIGN.Falcon (
   Falcon512DSIGN,
   SigDSIGN (..),
@@ -203,9 +204,22 @@ instance FixedSizeCodec (VerKeyDSIGN Falcon512DSIGN) where
 instance FixedSizeCodec (SignKeyDSIGN Falcon512DSIGN) where
   type FixedSize (SignKeyDSIGN Falcon512DSIGN) = FalconPrivKeySize
   rawEncodeFixedSized (SignKeyFalcon512DSIGN sk) = psbToByteString sk
-  rawDecodeFixedSized bs =
-    checkHeader privKeyHeader bs *> (SignKeyFalcon512DSIGN <$> rawDecodeFixedSized bs)
+  rawDecodeFixedSized bs = do
+    checkHeader privKeyHeader bs
+    sk <- rawDecodeFixedSized bs
+    unless (isValidSignKey sk) $
+      fail "Falcon512DSIGN: invalid signing key"
+    pure (SignKeyFalcon512DSIGN sk)
   {-# INLINE rawDecodeFixedSized #-}
+
+-- | Whether a signing key is one Falcon key generation could have produced;
+-- see @cardano_falcon512_check_private@ in @cbits/falcon_util.c@.
+isValidSignKey :: PinnedSizedBytes FalconPrivKeySize -> Bool
+isValidSignKey sk =
+  unsafeDupablePerformIO $
+    psbUseAsSizedPtr sk $ \skPtr ->
+      allocaSized $ \tmpPtr ->
+        (== 0) <$> c_falcon512_check_private skPtr tmpPtr
 
 instance FixedSizeCodec (SigDSIGN Falcon512DSIGN) where
   type FixedSize (SigDSIGN Falcon512DSIGN) = FalconSigSize

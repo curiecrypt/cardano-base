@@ -1,5 +1,6 @@
 #include "falcon_util.h"
 #include "falcon/falcon.h"
+#include "falcon/inner.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -95,6 +96,143 @@ int cardano_falcon512_make_public(uint8_t *pk, const uint8_t *sk, uint8_t *tmp) 
 }
 
 /*
+ * Scratch layout for cardano_falcon512_check_private: alignment slack, three
+ * fpr polynomials (the second also serves as complete_private's scratch), and
+ * f, g, F, G as int8. It reuses the keygen scratch size.
+ */
+#define CHECK_N ((size_t)1 << LOGN)
+#define CHECK_TMP_NEEDED (sizeof(fpr) - 1 + 3 * CHECK_N * sizeof(fpr) + 4 * CHECK_N)
+static_assert(CHECK_TMP_NEEDED <= CARDANO_FALCON512_TMP_KEYGEN_SIZE, "Falcon-512 check scratch too small");
+
+/*
+ * Check that an encoded private key is one Falcon key generation could have
+ * produced, so that signing with it terminates as for a generated key.
+ *
+ * The header and length alone accept degenerate keys: for example, a header
+ * followed by 0x04 and zeros decodes, gives a public key, and makes
+ * falcon_sign_dyn loop forever. Key generation (keygen.c) only outputs keys
+ * that pass the checks below, so a generated key always passes.
+ *
+ *   1. Header 0x50 + logn, and f, g, F decode with exactly the key's length.
+ *      The trim decoding bounds f, g to |x| < 2^5 and F to |x| < 2^7, as
+ *      keygen does.
+ *   2. complete_private computes G = g F / f mod q: f is invertible mod q and
+ *      |G| < 2^7.
+ *   3. f G - g F = q exactly, over Z[x]/(x^n + 1). Step 2 only gives this
+ *      modulo q; a key with f G - g F = 0 passes step 2 but is not a basis.
+ *   4. ||(g, -f)||^2 < 1.17^2 q, the keygen bound.
+ *   5. The Gram-Schmidt norm of the second basis vector is below the same
+ *      bound, computed as in keygen.
+ *
+ * Returns 0 if the key passes, FALCON_ERR_FORMAT otherwise.
+ *
+ * Buffers: sk CARDANO_FALCON512_PRIVKEY_SIZE, tmp
+ * CARDANO_FALCON512_TMP_KEYGEN_SIZE bytes. tmp is wiped before returning.
+ */
+int cardano_falcon512_check_private(const uint8_t *sk, uint8_t *tmp) {
+  const size_t n = CHECK_N;
+  const size_t sk_len = CARDANO_FALCON512_PRIVKEY_SIZE;
+  fpr *rt1, *rt2, *rt3;
+  int8_t *f, *g, *F, *G;
+  size_t u, v;
+  uint32_t norm;
+  fpr bnorm;
+  int r = FALCON_ERR_FORMAT;
+
+  rt1 = (fpr *)(tmp + ((sizeof(fpr) - ((uintptr_t)tmp % sizeof(fpr))) % sizeof(fpr)));
+  rt2 = rt1 + n;
+  rt3 = rt2 + n;
+  f = (int8_t *)(rt3 + n);
+  g = f + n;
+  F = g + n;
+  G = F + n;
+
+  /* 1. Header and decoding. */
+  if (sk[0] != 0x50 + LOGN) {
+    goto out;
+  }
+  u = 1;
+  v = Zf(trim_i8_decode)(f, LOGN, Zf(max_fg_bits)[LOGN], sk + u, sk_len - u);
+  if (v == 0) {
+    goto out;
+  }
+  u += v;
+  v = Zf(trim_i8_decode)(g, LOGN, Zf(max_fg_bits)[LOGN], sk + u, sk_len - u);
+  if (v == 0) {
+    goto out;
+  }
+  u += v;
+  v = Zf(trim_i8_decode)(F, LOGN, Zf(max_FG_bits)[LOGN], sk + u, sk_len - u);
+  if (v == 0) {
+    goto out;
+  }
+  u += v;
+  if (u != sk_len) {
+    goto out;
+  }
+
+  /* 2. G, with f invertible mod q and G in range. */
+  if (!Zf(complete_private)(G, f, g, F, LOGN, (uint8_t *)rt2)) {
+    goto out;
+  }
+
+  /*
+   * 3. f G - g F = q in Z[x]/(x^n + 1), coefficient by coefficient. Each
+   * term is below 31 * 127 in absolute value, so a coefficient stays below
+   * 2 * 512 * 3937 < 2^22 and fits in int32_t.
+   */
+  for (u = 0; u < n; u++) {
+    int32_t c = 0;
+    for (v = 0; v < n; v++) {
+      int32_t t = (int32_t)f[v] * G[(u - v) % n] - (int32_t)g[v] * F[(u - v) % n];
+      c += v <= u ? t : -t;
+    }
+    if (c != (u == 0 ? 12289 : 0)) {
+      goto out;
+    }
+  }
+
+  /* 4. ||(g, -f)||^2, an integer below 2 * 512 * 31^2. */
+  norm = 0;
+  for (u = 0; u < n; u++) {
+    norm += (uint32_t)((int32_t)f[u] * f[u]) + (uint32_t)((int32_t)g[u] * g[u]);
+  }
+  if (norm >= 16823) {
+    goto out;
+  }
+
+  /* 5. Orthogonalized norm, the same computation as keygen.c. */
+  for (u = 0; u < n; u++) {
+    rt1[u] = fpr_of(f[u]);
+    rt2[u] = fpr_of(g[u]);
+  }
+  Zf(FFT)(rt1, LOGN);
+  Zf(FFT)(rt2, LOGN);
+  Zf(poly_invnorm2_fft)(rt3, rt1, rt2, LOGN);
+  Zf(poly_adj_fft)(rt1, LOGN);
+  Zf(poly_adj_fft)(rt2, LOGN);
+  Zf(poly_mulconst)(rt1, fpr_q, LOGN);
+  Zf(poly_mulconst)(rt2, fpr_q, LOGN);
+  Zf(poly_mul_autoadj_fft)(rt1, rt3, LOGN);
+  Zf(poly_mul_autoadj_fft)(rt2, rt3, LOGN);
+  Zf(iFFT)(rt1, LOGN);
+  Zf(iFFT)(rt2, LOGN);
+  bnorm = fpr_zero;
+  for (u = 0; u < n; u++) {
+    bnorm = fpr_add(bnorm, fpr_sqr(rt1[u]));
+    bnorm = fpr_add(bnorm, fpr_sqr(rt2[u]));
+  }
+  if (!fpr_lt(bnorm, fpr_bnorm_max)) {
+    goto out;
+  }
+
+  r = 0;
+out:
+  wipe(tmp, CARDANO_FALCON512_TMP_KEYGEN_SIZE);
+  return r;
+}
+
+/*
  * Sign a message with a padded Falcon-512 signature.
  *
  * Deterministic: the PRNG that falcon_sign_dyn draws its 40-byte nonce and
@@ -109,6 +247,11 @@ int cardano_falcon512_make_public(uint8_t *pk, const uint8_t *sk, uint8_t *tmp) 
  *
  * Buffers: sig CARDANO_FALCON512_SIG_SIZE, sk CARDANO_FALCON512_PRIVKEY_SIZE,
  * tmp CARDANO_FALCON512_TMP_SIGN_SIZE bytes. tmp is wiped before returning.
+ *
+ * tmp must be 2-byte aligned. falcon.h says scratch buffers need no
+ * alignment, but falcon_sign_dyn reads tmp + 4n as uint16_t without aligning
+ * it first. The Haskell binding allocates tmp with allocaSized, which is
+ * word-aligned.
  */
 int cardano_falcon512_sign(uint8_t *sig, const uint8_t *sk,
                            const uint8_t *msg, size_t msg_len, uint8_t *tmp) {
