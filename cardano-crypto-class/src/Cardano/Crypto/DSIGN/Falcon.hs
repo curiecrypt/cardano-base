@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 -- According to the documentation for unsafePerformIO:
 --
 -- > Make sure that the either you switch off let-floating
@@ -35,6 +36,7 @@ import Cardano.Binary.FixedSizeCodec (
   FixedSizeCodec (..),
   decodeFixedSized,
   encodeFixedSized,
+  guardFixedSized,
  )
 import Cardano.Crypto.DSIGN.Class (
   DSIGNAlgorithm (
@@ -68,15 +70,19 @@ import Cardano.Crypto.PinnedSizedBytes (
   psbUseAsCPtr,
   psbUseAsSizedPtr,
  )
-import Cardano.Crypto.Seed (getBytesFromSeedT)
+import Cardano.Crypto.Seed (getBytesFromSeedT, mkSeedFromBytes)
 import Cardano.Crypto.Util (SignableRepresentation (getSignableRepresentation))
-import Cardano.Foreign (allocaSized)
+import Cardano.Foreign (SizedPtr (SizedPtr), allocaSized)
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
+import qualified Data.ByteString as BS
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Data.Proxy (Proxy (Proxy))
 import Foreign.C.Types (CInt, CSize)
+import Foreign.Marshal.Utils (copyBytes)
+import Foreign.Ptr (castPtr, plusPtr)
 import GHC.Generics (Generic)
+import GHC.TypeLits (type (+))
 import NoThunks.Class (NoThunks)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -91,16 +97,25 @@ import System.IO.Unsafe (unsafeDupablePerformIO)
 --   signature is converted to CT, a lossless re-encoding of the same
 --   signature.
 --
--- * Verification keys are 897 bytes, signing keys (the encoded private key)
---   1281 bytes, and seeds 32 bytes.
+-- * Verification keys are 897 bytes and seeds 32 bytes. A signing key holds
+--   its seed followed by the encoded private key (1281 bytes), and is
+--   serialised as its seed only, as for Ed25519: deserialising runs key
+--   generation.
 --
 -- * Signatures are not interoperable with standard (salted) Falcon-512: the
 --   deterministic mode uses a fixed, versioned salt and its own header byte.
 --
--- * As for Ed25519, decoding only checks the length. Verification rejects a
---   malformed verification key or signature, and a corrupted signing key is
---   detected when signing.
+-- * As for Ed25519, decoding a verification key or a signature only checks
+--   the length. Verification rejects a malformed one.
 data FalconDet512DSIGN
+
+-- | Size of a signing key in memory: the seed followed by the encoded private
+-- key.
+type SeedAndPrivKeySize = CARDANO_FALCON_DET512_SEED_SIZE + CARDANO_FALCON_DET512_PRIVKEY_SIZE
+
+-- | The encoded private key inside a signing key, after the seed.
+privKeyPtr :: SizedPtr SeedAndPrivKeySize -> SizedPtr CARDANO_FALCON_DET512_PRIVKEY_SIZE
+privKeyPtr (SizedPtr p) = SizedPtr (p `plusPtr` CARDANO_FALCON_DET512_SEED_SIZE)
 
 instance DSIGNAlgorithm FalconDet512DSIGN where
   type SeedSizeDSIGN FalconDet512DSIGN = CARDANO_FALCON_DET512_SEED_SIZE
@@ -113,7 +128,7 @@ instance DSIGNAlgorithm FalconDet512DSIGN where
     deriving anyclass (NoThunks)
 
   newtype SignKeyDSIGN FalconDet512DSIGN
-    = SignKeyFalconDet512 (PinnedSizedBytes CARDANO_FALCON_DET512_PRIVKEY_SIZE)
+    = SignKeyFalconDet512 (PinnedSizedBytes SeedAndPrivKeySize)
     deriving newtype (NFData)
     deriving stock (Generic)
     deriving anyclass (NoThunks)
@@ -131,7 +146,7 @@ instance DSIGNAlgorithm FalconDet512DSIGN where
     VerKeyFalconDet512 . unsafeDupablePerformIO $ do
       (vkPsb, rc) <- psbCreateSizedResult $ \vkp ->
         psbUseAsSizedPtr skPsb $ \skp ->
-          c_cardano_falcon_det512_derive_pubkey skp vkp
+          c_cardano_falcon_det512_derive_pubkey (privKeyPtr skp) vkp
       checkSuccess "deriveVerKeyDSIGN" rc
       pure vkPsb
 
@@ -141,7 +156,7 @@ instance DSIGNAlgorithm FalconDet512DSIGN where
       (sigPsb, rc) <- psbCreateSizedResult $ \sigp ->
         psbUseAsSizedPtr skPsb $ \skp ->
           unsafeUseAsCStringLen (getSignableRepresentation msg) $ \(msgp, msgLen) ->
-            c_cardano_falcon_det512_sign skp msgp (fromIntegral @Int @CSize msgLen) sigp
+            c_cardano_falcon_det512_sign (privKeyPtr skp) msgp (fromIntegral @Int @CSize msgLen) sigp
       checkSuccess "signDSIGN" rc
       pure sigPsb
 
@@ -161,16 +176,17 @@ instance DSIGNAlgorithm FalconDet512DSIGN where
   genKeyDSIGN seed =
     SignKeyFalconDet512 . unsafeDupablePerformIO $ do
       let (seedBytes, _) = getBytesFromSeedT (seedSizeDSIGN (Proxy @FalconDet512DSIGN)) seed
-      (skPsb, rc) <- psbCreateSizedResult $ \skp ->
+      (skPsb, rc) <- psbCreateSizedResult $ \skp@(SizedPtr skPtr) ->
         -- The verification key is recomputed by 'deriveVerKeyDSIGN' when needed.
         allocaSized $ \vkp ->
-          unsafeUseAsCStringLen seedBytes $ \(seedp, seedLen) ->
-            c_cardano_falcon_det512_keygen seedp (fromIntegral @Int @CSize seedLen) skp vkp
+          unsafeUseAsCStringLen seedBytes $ \(seedp, seedLen) -> do
+            copyBytes (castPtr skPtr) seedp seedLen
+            c_cardano_falcon_det512_keygen seedp (fromIntegral @Int @CSize seedLen) (privKeyPtr skp) vkp
       checkSuccess "genKeyDSIGN" rc
       pure skPsb
 
 -- Key generation, key derivation and signing cannot fail on valid inputs, so a
--- failure (for example, a corrupted signing key) is an error, as for Schnorr.
+-- failure is an error, as for Schnorr.
 checkSuccess :: String -> CInt -> IO ()
 checkSuccess fn rc =
   when (rc /= CARDANO_FALCON_SUCCESS) $
@@ -189,17 +205,21 @@ instance Eq (SignKeyDSIGN FalconDet512DSIGN) where
           res <- c_sodium_compare sk1Ptr sk2Ptr size
           pure (res == 0)
     where
-      size = fromIntegral @Int @CSize CARDANO_FALCON_DET512_PRIVKEY_SIZE
+      size = fromIntegral @Int @CSize (CARDANO_FALCON_DET512_SEED_SIZE + CARDANO_FALCON_DET512_PRIVKEY_SIZE)
 
 instance FixedSizeCodec (VerKeyDSIGN FalconDet512DSIGN) where
   type FixedSize (VerKeyDSIGN FalconDet512DSIGN) = CARDANO_FALCON_DET512_PUBKEY_SIZE
   rawEncodeFixedSized (VerKeyFalconDet512 vkPsb) = psbToByteString vkPsb
   rawDecodeFixedSized bs = VerKeyFalconDet512 <$> rawDecodeFixedSized bs
 
+-- As for Ed25519, a signing key is serialised as its seed, and deserialising
+-- runs key generation.
 instance FixedSizeCodec (SignKeyDSIGN FalconDet512DSIGN) where
-  type FixedSize (SignKeyDSIGN FalconDet512DSIGN) = CARDANO_FALCON_DET512_PRIVKEY_SIZE
-  rawEncodeFixedSized (SignKeyFalconDet512 skPsb) = psbToByteString skPsb
-  rawDecodeFixedSized bs = SignKeyFalconDet512 <$> rawDecodeFixedSized bs
+  type FixedSize (SignKeyDSIGN FalconDet512DSIGN) = CARDANO_FALCON_DET512_SEED_SIZE
+  rawEncodeFixedSized (SignKeyFalconDet512 skPsb) =
+    unsafeDupablePerformIO . psbUseAsCPtr skPsb $ \skPtr ->
+      BS.packCStringLen (castPtr skPtr, CARDANO_FALCON_DET512_SEED_SIZE)
+  rawDecodeFixedSized bs = guardFixedSized bs $ pure . genKeyDSIGN $ mkSeedFromBytes bs
 
 instance FixedSizeCodec (SigDSIGN FalconDet512DSIGN) where
   type FixedSize (SigDSIGN FalconDet512DSIGN) = CARDANO_FALCON_DET512_SIG_SIZE
