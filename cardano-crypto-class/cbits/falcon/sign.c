@@ -29,6 +29,8 @@
  * @author   Thomas Pornin <thomas.pornin@nccgroup.com>
  */
 
+#include <sodium.h>
+
 #include "inner.h"
 
 /* =================================================================== */
@@ -1506,6 +1508,7 @@ Zf(sign_dyn)(int16_t *sig, inner_shake256_context *rng,
 		sampler_context spc;
 		samplerZ samp;
 		void *samp_ctx;
+		int ok;
 
 		/*
 		 * Normal sampling. We use a fast PRNG seeded from our
@@ -1519,9 +1522,15 @@ Zf(sign_dyn)(int16_t *sig, inner_shake256_context *rng,
 		/*
 		 * Do the actual signature.
 		 */
-		if (do_sign_dyn(samp, samp_ctx, sig,
-			f, g, F, G, hm, logn, ftmp))
-		{
+		ok = do_sign_dyn(samp, samp_ctx, sig,
+			f, g, F, G, hm, logn, ftmp);
+
+		/*
+		 * cardano-base: wipe the sampler state, whose PRNG is seeded
+		 * from the private key and the message.
+		 */
+		sodium_memzero(&spc, sizeof spc);
+		if (ok) {
 			break;
 		}
 	}

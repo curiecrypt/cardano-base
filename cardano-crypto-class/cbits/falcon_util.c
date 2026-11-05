@@ -94,8 +94,8 @@ int cardano_falcon_det512_derive_pubkey(const uint8_t *privkey, uint8_t *pubkey)
  * known-answer tests of algorand/falcon are produced). The caller provides
  * privkey (CARDANO_FALCON_DET512_PRIVKEY_SIZE bytes), msg (msg_len bytes) and
  * sig (CARDANO_FALCON_DET512_SIG_SIZE bytes). As for key generation, the
- * vendored signing function wipes its secret-dependent scratch memory (a local
- * modification, see NOTICE).
+ * vendored signing function wipes its secret-dependent scratch memory and
+ * sampler state (local modifications, see NOTICE).
  *
  * Returns CARDANO_FALCON_SUCCESS, or a negative CARDANO_FALCON_ERR_* code.
  */
