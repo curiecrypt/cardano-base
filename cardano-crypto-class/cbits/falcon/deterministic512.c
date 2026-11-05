@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <sodium.h>
+
 #include "falcon.h"
 #include "inner.h"
 #include "deterministic.h"
@@ -10,10 +12,13 @@
 int falcon_det512_keygen(shake256_context *rng, void *privkey, void *pubkey) {
 	uint8_t tmpkg[FALCON_TMPSIZE_KEYGEN(FALCON_DET512_LOGN)];
 
-	return falcon_keygen_make(rng, FALCON_DET512_LOGN,
+	int r = falcon_keygen_make(rng, FALCON_DET512_LOGN,
 		privkey, FALCON_DET512_PRIVKEY_SIZE,
 		pubkey, FALCON_DET512_PUBKEY_SIZE,
 		tmpkg, FALCON_TMPSIZE_KEYGEN(FALCON_DET512_LOGN));
+	// cardano-base: wipe the scratch memory, which holds the secret polynomials.
+	sodium_memzero(tmpkg, sizeof tmpkg);
+	return r;
 }
 
 // Domain separator used to construct the fixed versioned salt string.
@@ -59,6 +64,10 @@ int falcon_det512_sign_compressed(void *sig, size_t *sig_len,
 	int r = falcon_sign_dyn_finish(&detrng, saltedsig, &saltedsig_len,
 		FALCON_SIG_COMPRESSED, privkey, FALCON_DET512_PRIVKEY_SIZE,
 		&hd, salt, tmpsd, FALCON_TMPSIZE_SIGNDYN(FALCON_DET512_LOGN));
+	// cardano-base: wipe the scratch memory, which holds the decoded private
+	// key, and the SHAKE state seeded with the private key.
+	sodium_memzero(tmpsd, sizeof tmpsd);
+	sodium_memzero(&detrng, sizeof detrng);
 	if (r != 0) {
 		return r;
 	}

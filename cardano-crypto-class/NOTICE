@@ -24,6 +24,10 @@ README.txt of that repository and reproduced below. Most vendored files
 also carry this notice in their headers; cbits/falcon/deterministic.h and
 cbits/falcon/deterministic512.c do not and are covered by this notice.
 
+Local modifications, marked "cardano-base" in the code: in
+cbits/falcon/deterministic512.c, key generation and signing wipe their
+secret scratch memory before returning.
+
    Copyright (c) 2017-2020  Falcon Project
 
    Permission is hereby granted, free of charge, to any person obtaining

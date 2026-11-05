@@ -47,9 +47,9 @@ static_assert(FALCON_ERR_INTERNAL == CARDANO_FALCON_ERR_INTERNAL, "FALCON_ERR_IN
  * seed always gives the same key pair. The caller provides privkey
  * (CARDANO_FALCON_DET512_PRIVKEY_SIZE bytes) and pubkey
  * (CARDANO_FALCON_DET512_PUBKEY_SIZE bytes). The PRNG state, from which the
- * key pair could be regenerated, is wiped before returning. Scratch memory
- * inside falcon_det512_keygen itself is not wiped, as that would require
- * modifying the vendored code.
+ * key pair could be regenerated, is wiped before returning.
+ * falcon_det512_keygen wipes its own scratch memory (a local modification of
+ * the vendored code, see NOTICE).
  *
  * Returns CARDANO_FALCON_SUCCESS, or a negative CARDANO_FALCON_ERR_* code.
  */
@@ -94,8 +94,8 @@ int cardano_falcon_det512_derive_pubkey(const uint8_t *privkey, uint8_t *pubkey)
  * known-answer tests of algorand/falcon are produced). The caller provides
  * privkey (CARDANO_FALCON_DET512_PRIVKEY_SIZE bytes), msg (msg_len bytes) and
  * sig (CARDANO_FALCON_DET512_SIG_SIZE bytes). As for key generation, the
- * secret-dependent scratch memory inside the vendored signing function is not
- * wiped.
+ * vendored signing function wipes its secret-dependent scratch memory (a local
+ * modification, see NOTICE).
  *
  * Returns CARDANO_FALCON_SUCCESS, or a negative CARDANO_FALCON_ERR_* code.
  */
