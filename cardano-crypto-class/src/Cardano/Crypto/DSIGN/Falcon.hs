@@ -3,9 +3,11 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -51,6 +53,15 @@ import Cardano.Crypto.DSIGN.Class (
     signDSIGN,
     verifyDSIGN
   ),
+  DSIGNMAlgorithm (
+    SignKeyDSIGNM,
+    cloneKeyDSIGNMWith,
+    deriveVerKeyDSIGNM,
+    forgetSignKeyDSIGNMWith,
+    genKeyDSIGNMWith,
+    getSeedDSIGNMWith,
+    signDSIGNM
+  ),
   encodedSigDSIGNSizeExpr,
   encodedSignKeyDSIGNSizeExpr,
   encodedVerKeyDSIGNSizeExpr,
@@ -62,7 +73,16 @@ import Cardano.Crypto.Falcon.C (
   c_cardano_falcon_det512_sign,
   c_cardano_falcon_det512_verify,
  )
+import Cardano.Crypto.Libsodium (
+  MLockedSizedBytes,
+  mlsbCopyWith,
+  mlsbFinalize,
+  mlsbNewWith,
+  mlsbUseAsCPtr,
+  mlsbUseAsSizedPtr,
+ )
 import Cardano.Crypto.Libsodium.C (c_sodium_compare)
+import Cardano.Crypto.Libsodium.MLockedSeed (mlockedSeedNewWith, mlockedSeedUseAsCPtr)
 import Cardano.Crypto.PinnedSizedBytes (
   PinnedSizedBytes,
   psbCreateSizedResult,
@@ -73,8 +93,11 @@ import Cardano.Crypto.PinnedSizedBytes (
 import Cardano.Crypto.Seed (getBytesFromSeedT, mkSeedFromBytes)
 import Cardano.Crypto.Util (SignableRepresentation (getSignableRepresentation))
 import Cardano.Foreign (SizedPtr (SizedPtr), allocaSized)
-import Control.DeepSeq (NFData)
-import Control.Monad (when)
+import Control.DeepSeq (NFData (rnf), rwhnf)
+import Control.Monad (when, (<$!>))
+import Control.Monad.Class.MonadST (MonadST (stToIO))
+import Control.Monad.Class.MonadThrow (MonadThrow, throwIO)
+import Control.Monad.ST.Unsafe (unsafeIOToST)
 import qualified Data.ByteString as BS
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Data.Proxy (Proxy (Proxy))
@@ -246,3 +269,75 @@ instance ToCBOR (SigDSIGN FalconDet512DSIGN) where
 
 instance FromCBOR (SigDSIGN FalconDet512DSIGN) where
   fromCBOR = decodeFixedSized
+
+--
+-- Mlocked signing keys
+--
+
+-- As for Ed25519, 'NoThunks' and 'NFData' only look at the mlocked bytes.
+deriving via
+  (MLockedSizedBytes SeedAndPrivKeySize)
+  instance
+    NoThunks (SignKeyDSIGNM FalconDet512DSIGN)
+
+instance NFData (SignKeyDSIGNM FalconDet512DSIGN) where
+  rnf = rwhnf
+
+-- As 'checkSuccess', for the mlocked methods: they throw through 'MonadThrow',
+-- as Ed25519's do.
+throwOnFailure :: MonadThrow m => String -> CInt -> m ()
+throwOnFailure fn rc =
+  when (rc /= CARDANO_FALCON_SUCCESS) $
+    throwIO . userError $
+      fn <> ": FalconDet512DSIGN failed with code " <> show rc
+
+-- The same layout as 'SignKeyDSIGN' (the seed followed by the encoded private
+-- key), in mlocked memory. As for Ed25519, failures throw an exception.
+instance DSIGNMAlgorithm FalconDet512DSIGN where
+  newtype SignKeyDSIGNM FalconDet512DSIGN
+    = SignKeyFalconDet512M (MLockedSizedBytes SeedAndPrivKeySize)
+    deriving (Show)
+
+  deriveVerKeyDSIGNM (SignKeyFalconDet512M sk) = do
+    (vkPsb, rc) <- mlsbUseAsSizedPtr sk $ \skp ->
+      stToIO . unsafeIOToST . psbCreateSizedResult $ \vkp ->
+        c_cardano_falcon_det512_derive_pubkey (privKeyPtr skp) vkp
+    throwOnFailure "deriveVerKeyDSIGNM" rc
+    pure $! VerKeyFalconDet512 vkPsb
+
+  signDSIGNM () msg (SignKeyFalconDet512M sk) = do
+    (sigPsb, rc) <- mlsbUseAsSizedPtr sk $ \skp ->
+      stToIO . unsafeIOToST . psbCreateSizedResult $ \sigp ->
+        unsafeUseAsCStringLen (getSignableRepresentation msg) $ \(msgp, msgLen) ->
+          c_cardano_falcon_det512_sign (privKeyPtr skp) msgp (fromIntegral @Int @CSize msgLen) sigp
+    throwOnFailure "signDSIGNM" rc
+    pure $! SigFalconDet512 sigPsb
+
+  {-# NOINLINE genKeyDSIGNMWith #-}
+  genKeyDSIGNMWith allocator seed = do
+    sk <- mlsbNewWith allocator
+    rc <- mlsbUseAsSizedPtr sk $ \skp@(SizedPtr skPtr) ->
+      mlockedSeedUseAsCPtr seed $ \seedPtr ->
+        stToIO . unsafeIOToST $ do
+          copyBytes (castPtr skPtr) seedPtr CARDANO_FALCON_DET512_SEED_SIZE
+          -- The verification key is recomputed by 'deriveVerKeyDSIGNM' when needed.
+          allocaSized $ \vkp ->
+            c_cardano_falcon_det512_keygen
+              (castPtr seedPtr)
+              CARDANO_FALCON_DET512_SEED_SIZE
+              (privKeyPtr skp)
+              vkp
+    throwOnFailure "genKeyDSIGNM" rc
+    pure $! SignKeyFalconDet512M sk
+
+  cloneKeyDSIGNMWith allocator (SignKeyFalconDet512M sk) =
+    SignKeyFalconDet512M <$!> mlsbCopyWith allocator sk
+
+  getSeedDSIGNMWith allocator _ (SignKeyFalconDet512M sk) = do
+    seed <- mlockedSeedNewWith allocator
+    mlsbUseAsCPtr sk $ \skPtr ->
+      mlockedSeedUseAsCPtr seed $ \seedPtr ->
+        stToIO . unsafeIOToST $ copyBytes seedPtr skPtr CARDANO_FALCON_DET512_SEED_SIZE
+    pure seed
+
+  forgetSignKeyDSIGNMWith _ (SignKeyFalconDet512M sk) = mlsbFinalize sk
