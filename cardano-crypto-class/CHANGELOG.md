@@ -2,6 +2,11 @@
 
 ## 2.6.0.0
 
+* Add `Falcon512DSIGN`: Falcon-512 signatures (Falcon round 3, padded format,
+  666 bytes), backed by the vendored Falcon reference implementation in
+  `cbits/falcon` (MIT). Signing is deterministic: the signing randomness is
+  derived from the key and the message. Decoding rejects signing keys that
+  Falcon key generation could not have produced.
 * Replace memory dependency with ram (drop in replacement)
 * Depend on crypton ^>- 1.1
 * Fix the DST used when hashing the public key for BLS12-381 proofs of possession:

@@ -47,6 +47,7 @@ import Data.Word (Word8)
 import Foreign.C.Types (CInt, CSize)
 import Foreign.Ptr (castPtr)
 import GHC.Generics (Generic)
+import GHC.TypeLits (natVal)
 import NoThunks.Class (NoThunks)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -54,10 +55,12 @@ import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.Falcon.Internal
+import Cardano.Crypto.Libsodium.C (c_sodium_compare)
 import Cardano.Crypto.PinnedSizedBytes (
   PinnedSizedBytes,
   psbCreateSized,
   psbToByteString,
+  psbUseAsCPtr,
   psbUseAsSizedPtr,
  )
 import Cardano.Crypto.Seed
@@ -88,9 +91,9 @@ instance DSIGNAlgorithm Falcon512DSIGN where
     deriving (Show, Eq, Generic)
     deriving newtype (NFData)
 
-  -- Show is hidden below; the signing key must not end up in logs.
+  -- Show is hidden and Eq is constant-time, both below.
   newtype SignKeyDSIGN Falcon512DSIGN = SignKeyFalcon512DSIGN (PinnedSizedBytes FalconPrivKeySize)
-    deriving (Eq, Generic)
+    deriving (Generic)
     deriving newtype (NFData)
 
   newtype SigDSIGN Falcon512DSIGN = SigFalcon512DSIGN (PinnedSizedBytes FalconSigSize)
@@ -175,6 +178,17 @@ instance DSIGNAlgorithm Falcon512DSIGN where
 
 instance Show (SignKeyDSIGN Falcon512DSIGN) where
   show _ = "Falcon512DSIGN:<secret>"
+
+-- | Constant-time equality, as for BLS12-381 signing keys.
+instance Eq (SignKeyDSIGN Falcon512DSIGN) where
+  SignKeyFalcon512DSIGN sk1 == SignKeyFalcon512DSIGN sk2 =
+    unsafeDupablePerformIO $
+      psbUseAsCPtr sk1 $ \sk1Ptr ->
+        psbUseAsCPtr sk2 $ \sk2Ptr -> do
+          res <- c_sodium_compare sk1Ptr sk2Ptr size
+          pure (res == 0)
+    where
+      size = fromIntegral @Integer @CSize (natVal (Proxy @FalconPrivKeySize))
 
 --
 -- Encoding
