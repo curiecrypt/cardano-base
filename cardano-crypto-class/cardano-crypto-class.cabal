@@ -7,7 +7,7 @@ synopsis:
 description:
   Type classes abstracting over cryptography primitives for Cardano
 
-license: Apache-2.0
+license: Apache-2.0 AND MIT
 license-files:
   LICENSE
   NOTICE
@@ -23,6 +23,11 @@ extra-doc-files:
 
 extra-source-files:
   cbits/blst_util.h
+  cbits/falcon/config.h
+  cbits/falcon/falcon.h
+  cbits/falcon/fpr.h
+  cbits/falcon/inner.h
+  cbits/falcon_util.h
 
 data-files:
   bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors
@@ -68,11 +73,13 @@ library
     Cardano.Crypto.DSIGN.Class
     Cardano.Crypto.DSIGN.Ed25519
     Cardano.Crypto.DSIGN.Ed448
+    Cardano.Crypto.DSIGN.Falcon
     Cardano.Crypto.DSIGN.Mock
     Cardano.Crypto.DSIGN.NeverUsed
     Cardano.Crypto.DirectSerialise
     Cardano.Crypto.EllipticCurve.BLS12_381
     Cardano.Crypto.EllipticCurve.BLS12_381.Internal
+    Cardano.Crypto.Falcon.Internal
     Cardano.Crypto.Hash
     Cardano.Crypto.Hash.Blake2b
     Cardano.Crypto.Hash.Class
@@ -151,7 +158,23 @@ library
     libblst >=0.3.14,
     libsodium,
 
-  c-sources: cbits/blst_util.c
+  c-sources:
+    cbits/blst_util.c
+    cbits/falcon/codec.c
+    cbits/falcon/common.c
+    cbits/falcon/falcon.c
+    cbits/falcon/fft.c
+    cbits/falcon/fpr.c
+    cbits/falcon/keygen.c
+    cbits/falcon/rng.c
+    cbits/falcon/shake.c
+    cbits/falcon/sign.c
+    cbits/falcon/vrfy.c
+    cbits/falcon_util.c
+
+  -- Emulated floating point keeps Falcon signatures bit-identical across
+  -- platforms; cbits/falcon_util.c refuses to build without it.
+  cc-options: -DFALCON_FPEMU=1
   include-dirs: cbits
 
   if flag(secp256k1-support)
@@ -180,6 +203,8 @@ library testlib
     Test.Crypto.Regressions
     Test.Crypto.RunIO
     Test.Crypto.Util
+    Test.Crypto.Vector.Falcon512DSIGN
+    Test.Crypto.Vector.Falcon512Vectors
     Test.Crypto.Vector.SerializationUtils
 
   other-modules: Paths_cardano_crypto_class

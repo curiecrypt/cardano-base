@@ -12,3 +12,8 @@ Copyright 2019-2021 Input Output (Hong Kong) Ltd.
    See the License for the specific language governing permissions and
    limitations under the License.
 
+This package additionally contains C code vendored from the Falcon reference
+implementation (https://falcon-sign.info/Falcon-impl-20211101.zip),
+Copyright (c) 2017-2019 Falcon Project, distributed under the MIT License.
+See the license headers in cbits/falcon/. Trailing whitespace was removed;
+the code is otherwise unmodified.

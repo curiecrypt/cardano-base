@@ -20,6 +20,7 @@ import Control.DeepSeq
 
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Ed25519
+import Cardano.Crypto.DSIGN.Falcon
 #ifdef SECP256K1_ENABLED
 import Cardano.Crypto.DSIGN.EcdsaSecp256k1
 import Cardano.Crypto.DSIGN.SchnorrSecp256k1
@@ -34,6 +35,7 @@ import Cardano.Crypto.DSIGN.BLS12381.Internal (BLS12381MinSigDSIGN, BLS12381MinV
 benchmarks :: Benchmark
 benchmarks = bgroup "DSIGN"
   [ benchDSIGN (Proxy :: Proxy Ed25519DSIGN) "Ed25519"
+  , benchDSIGN (Proxy :: Proxy Falcon512DSIGN) "Falcon512"
   , benchDSIGN (Proxy :: Proxy BLS12381MinVerKeyDSIGN) "BLS12381MinVerKey"
   , benchDSIGN (Proxy :: Proxy BLS12381MinSigDSIGN) "BLS12381MinSig"
   , benchAggDSIGN (Proxy :: Proxy BLS12381MinVerKeyDSIGN) "BLS12381MinVerKey"
@@ -89,6 +91,9 @@ instance ExampleSignable Ed25519DSIGN ByteString where
 instance ExampleSignable (BLS12381DSIGN curve) ByteString where
   exampleSignable _ = typicalMsg
 
+instance ExampleSignable Falcon512DSIGN ByteString where
+  exampleSignable _ = typicalMsg
+
 #ifdef SECP256K1_ENABLED
 instance ExampleSignable EcdsaSecp256k1DSIGN MessageHash where
   exampleSignable _ = hashAndPack (Proxy @Blake2b_256) typicalMsg
@@ -115,6 +120,9 @@ instance ExampleContext SchnorrSecp256k1DSIGN where
 #endif
 
 instance ExampleContext (BLS12381DSIGN curve) where
+  exampleContext _ = ()
+
+instance ExampleContext Falcon512DSIGN where
   exampleContext _ = ()
 
 benchAggDSIGN :: forall v a
