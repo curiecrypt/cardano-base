@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- According to the documentation for unsafePerformIO:
 --
 -- > Make sure that the either you switch off let-floating
@@ -62,9 +63,14 @@ import Cardano.Crypto.DSIGN.Class (
     getSeedDSIGNMWith,
     signDSIGNM
   ),
+  UnsoundDSIGNMAlgorithm (
+    rawDeserialiseSignKeyDSIGNMWith,
+    rawSerialiseSignKeyDSIGNM
+  ),
   encodedSigDSIGNSizeExpr,
   encodedSignKeyDSIGNSizeExpr,
   encodedVerKeyDSIGNSizeExpr,
+  getSeedDSIGNM,
   seedSizeDSIGN,
  )
 import Cardano.Crypto.Falcon.C (
@@ -77,12 +83,19 @@ import Cardano.Crypto.Libsodium (
   MLockedSizedBytes,
   mlsbCopyWith,
   mlsbFinalize,
+  mlsbFromByteStringCheckWith,
   mlsbNewWith,
+  mlsbToByteString,
   mlsbUseAsCPtr,
   mlsbUseAsSizedPtr,
  )
 import Cardano.Crypto.Libsodium.C (c_sodium_compare)
-import Cardano.Crypto.Libsodium.MLockedSeed (mlockedSeedNewWith, mlockedSeedUseAsCPtr)
+import Cardano.Crypto.Libsodium.MLockedSeed (
+  MLockedSeed (MLockedSeed, mlockedSeedMLSB),
+  mlockedSeedFinalize,
+  mlockedSeedNewWith,
+  mlockedSeedUseAsCPtr,
+ )
 import Cardano.Crypto.PinnedSizedBytes (
   PinnedSizedBytes,
   psbCreateSizedResult,
@@ -105,7 +118,7 @@ import Foreign.C.Types (CInt, CSize)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (castPtr, plusPtr)
 import GHC.Generics (Generic)
-import GHC.TypeLits (type (+))
+import GHC.TypeLits (ErrorMessage (Text), TypeError, type (+))
 import NoThunks.Class (NoThunks)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -341,3 +354,38 @@ instance DSIGNMAlgorithm FalconDet512DSIGN where
     pure seed
 
   forgetSignKeyDSIGNMWith _ (SignKeyFalconDet512M sk) = mlsbFinalize sk
+
+instance UnsoundDSIGNMAlgorithm FalconDet512DSIGN where
+  --
+  -- Ser/deser (dangerous - do not use in production code)
+  --
+  rawSerialiseSignKeyDSIGNM sk = do
+    seed <- getSeedDSIGNM (Proxy @FalconDet512DSIGN) sk
+    -- We need to copy the seed into unsafe memory and finalize the MLSB, in
+    -- order to avoid leaking mlocked memory. This will, however, expose the
+    -- secret seed to the unprotected Haskell heap (see 'mlsbToByteString').
+    raw <- mlsbToByteString . mlockedSeedMLSB $ seed
+    mlockedSeedFinalize seed
+    return raw
+
+  rawDeserialiseSignKeyDSIGNMWith allocator raw = do
+    mseed <- fmap MLockedSeed <$> mlsbFromByteStringCheckWith allocator raw
+    case mseed of
+      Nothing -> return Nothing
+      Just seed -> do
+        sk <- Just <$> genKeyDSIGNMWith allocator seed
+        mlockedSeedFinalize seed
+        return sk
+
+instance
+  TypeError ('Text "CBOR encoding would violate mlocking guarantees") =>
+  ToCBOR (SignKeyDSIGNM FalconDet512DSIGN)
+  where
+  toCBOR = error "unsupported"
+  encodedSizeExpr _ = error "unsupported"
+
+instance
+  TypeError ('Text "CBOR decoding would violate mlocking guarantees") =>
+  FromCBOR (SignKeyDSIGNM FalconDet512DSIGN)
+  where
+  fromCBOR = error "unsupported"
