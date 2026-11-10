@@ -84,6 +84,9 @@ tests lock =
     testKESAlloc (Proxy @(SingleKES Ed25519DSIGN)) "SingleKES"
     testKESAlloc (Proxy @(Sum1KES Ed25519DSIGN Blake2b_256)) "Sum1KES"
     testKESAlloc (Proxy @(Sum2KES Ed25519DSIGN Blake2b_256)) "Sum2KES"
+    testKESAlloc (Proxy @(SingleKES FalconDet512DSIGN)) "SingleKES_FalconDet512"
+    testKESAlloc (Proxy @(Sum1KES FalconDet512DSIGN Blake2b_256)) "Sum1KES_FalconDet512"
+    testKESAlloc (Proxy @(Sum2KES FalconDet512DSIGN Blake2b_256)) "Sum2KES_FalconDet512"
     testKESAlgorithm @(MockKES 7) lock "MockKES"
     testKESAlgorithm @(SimpleKES Ed25519DSIGN 7) lock "SimpleKES"
     testKESAlgorithm @(SingleKES Ed25519DSIGN) lock "SingleKES"
@@ -93,6 +96,14 @@ tests lock =
     testKESAlgorithm @(CompactSum1KES Ed25519DSIGN Blake2b_256) lock "CompactSum1KES"
     testKESAlgorithm @(CompactSum2KES Ed25519DSIGN Blake2b_256) lock "CompactSum2KES"
     testKESAlgorithm @(CompactSum5KES Ed25519DSIGN Blake2b_256) lock "CompactSum5KES"
+    -- Falcon's key generation is slow (~6 ms), so the KES tests with a Falcon
+    -- leaf run 100 times instead of the floor of 1,000 set in test/Main.hs.
+    modifyMaxSuccess (const 100) $ do
+      testKESAlgorithm @(SingleKES FalconDet512DSIGN) lock "SingleKES_FalconDet512"
+      testKESAlgorithm @(Sum1KES FalconDet512DSIGN Blake2b_256) lock "Sum1KES_FalconDet512"
+      testKESAlgorithm @(Sum2KES FalconDet512DSIGN Blake2b_256) lock "Sum2KES_FalconDet512"
+      testKESAlgorithm @(CompactSum1KES FalconDet512DSIGN Blake2b_256) lock "CompactSum1KES_FalconDet512"
+      testKESAlgorithm @(CompactSum2KES FalconDet512DSIGN Blake2b_256) lock "CompactSum2KES_FalconDet512"
 
 --------------------------------------------------------------------------------
 -- Show and Eq instances
@@ -119,6 +130,13 @@ instance Show (SignKeyKES (CompactSingleKES Ed25519DSIGN)) where
 
 instance Show (SignKeyKES (CompactSumKES h d)) where
   show _ = "<SignKeyCompactSumKES>"
+
+-- Falcon signing keys (1,313 bytes) are shown as a placeholder, as the Sum ones are.
+instance Show (SignKeyKES (SingleKES FalconDet512DSIGN)) where
+  show _ = "<SignKeySingleKES FalconDet512DSIGN>"
+
+instance Show (SignKeyKES (CompactSingleKES FalconDet512DSIGN)) where
+  show _ = "<SignKeyCompactSingleKES FalconDet512DSIGN>"
 
 deriving via (PureEqST (SignKeyKES (MockKES t))) instance EqST (SignKeyKES (MockKES t))
 
