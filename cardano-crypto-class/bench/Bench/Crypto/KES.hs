@@ -73,11 +73,10 @@ benchKES _ lbl msg =
     [ bench "genKey" $
         nfIO $
           genKeyKES @v testSeedML >>= forgetSignKeyKES @v
-    , env (genKeyKES @v testSeedML) $ \signKey ->
+    , envWithCleanup (genKeyKES @v testSeedML) forgetSignKeyKES $ \signKey ->
         bench "signKES" $
-          nfIO $ do
-            sig <- signKES @v () 0 msg signKey
-            sig <$ forgetSignKeyKES signKey
+          nfIO $
+            signKES @v () 0 msg signKey
     , let prepSignedEnv = do
             signKey <- genKeyKES @v testSeedML
             verKey <- deriveVerKeyKES signKey
@@ -86,10 +85,10 @@ benchKES _ lbl msg =
             pure (verKey, sig)
        in env prepSignedEnv $ \ ~(verKey, sig) ->
             bench "verifyKES" $
-              nf (fromRight . verifyKES @v () verKey 0 typicalMsg) sig
-    , env (genKeyKES @v testSeedML) $ \signKey ->
+              nf (fromRight (error "verifyKES failed") . verifyKES @v () verKey 0 msg) sig
+    , envWithCleanup (genKeyKES @v testSeedML) forgetSignKeyKES $ \signKey ->
         bench "updateKES" $
           nfIO $ do
             sk <- fromJust <$> updateKES () signKey 0
-            sk <$ forgetSignKeyKES signKey
+            forgetSignKeyKES sk
     ]
