@@ -50,6 +50,8 @@ import Data.Word (Word8)
 
 import Control.Exception (evaluate, bracket)
 import Control.Monad (replicateM, when)
+import Control.Tracer (traceWith)
+import Data.IORef (newIORef, readIORef)
 
 import Cardano.Crypto.DSIGN (
   MockDSIGN,
@@ -106,6 +108,7 @@ import Cardano.Crypto.Libsodium.MLockedSeed
 
 import Test.Crypto.Instances (withMLockedSeedFromPSB)
 import Test.Crypto.EqST (EqST (..), (==!))
+import Test.Crypto.AllocLog (AllocEvent (..), eventTracer, matchAllocLog, mkLoggingAllocator)
 
 #ifdef SECP256K1_ENABLED
 import Cardano.Crypto.DSIGN (
@@ -208,7 +211,10 @@ tests lock =
        testEcdsaWithHashAlgorithm (Proxy @Keccak256) "EcdsaSecp256k1WithKeccak256"
 #endif
      describe "MLocked" $ do
-      testDSIGNMAlgorithm lock (Proxy @Ed25519DSIGN) "Ed25519DSIGN"
+      testDSIGNMAlgorithm lock True (Proxy @Ed25519DSIGN) "Ed25519DSIGN"
+      -- Falcon's signing key (1,313 bytes) is not pooled, so it cannot be read
+      -- after forgetting it (see 'prop_key_overwritten_after_forget').
+      testDSIGNMAlgorithm lock False (Proxy @FalconDet512DSIGN) "FalconDet512DSIGN"
      describe "Aggregatable" $ do
       testDSIGNAggregatableWithContext (Proxy @(BLS12381DSIGN Curve1)) (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinVerKeyDSIGN"
       testDSIGNAggregatableWithContext (Proxy @(BLS12381DSIGN Curve2)) (pure ()) blsGenKeyWithContextGen (arbitrary @Message) "BLS12381MinSigDSIGN"
@@ -437,10 +443,11 @@ testDSIGNMAlgorithm
                , DirectDeserialise (VerKeyDSIGN v)
                )
   => Lock
+  -> Bool -- ^ Run 'prop_key_overwritten_after_forget' (only for pooled keys, see there)
   -> Proxy v
   -> String
   -> Spec
-testDSIGNMAlgorithm lock _ n =
+testDSIGNMAlgorithm lock readAfterForget _ n =
   describe n $ do
      describe "serialisation" $ do
        describe "raw" $ do
@@ -558,7 +565,9 @@ testDSIGNMAlgorithm lock _ n =
        prop "extracted seed equals original seed" $ prop_dsignm_seed_roundtrip (Proxy @v)
 
      describe "forgetting" $ do
-       prop "key overwritten after forget" $ prop_key_overwritten_after_forget (Proxy @v)
+       when readAfterForget $
+         prop "key overwritten after forget" $ prop_key_overwritten_after_forget (Proxy @v)
+       prop "mlocked memory freed after forget" $ prop_key_freed_after_forget (Proxy @v)
 
      describe "NoThunks" $ do
        prop "VerKey" $
@@ -614,6 +623,11 @@ ioPropertyWithSK :: forall v a. (Testable a, DSIGNMAlgorithm v)
 ioPropertyWithSK lock action seedPSB =
   ioProperty . withLock lock $ withSK seedPSB action
 
+-- | Reads the key after forgetting it. This only works for keys of at most 512
+-- bytes, which come from memory pools: a pool zeroes a freed block but keeps it
+-- mapped. Larger keys are freed with sodium_free, which zeroes and unmaps them,
+-- so reading them afterwards crashes. 'prop_key_freed_after_forget' checks
+-- forgetting for keys of any size.
 prop_key_overwritten_after_forget
   :: forall v.
      (DSIGNMAlgorithm v
@@ -637,6 +651,37 @@ prop_key_overwritten_after_forget p seedPSB =
     mlockedSeedFinalize seedAfter
 
     return (bsBefore =/= bsAfter)
+
+-- | Forgetting a key frees all the mlocked memory it allocated, logged by
+-- 'mkLoggingAllocator' around the real allocator (as 'testMLockGenKeyKES'
+-- checks for KES). Freeing is what wipes the memory: the pools zero their
+-- blocks, and sodium_free zeroes larger ones. Unlike
+-- 'prop_key_overwritten_after_forget', this never reads freed memory, so it
+-- also works for keys of more than 512 bytes, which are not pooled.
+prop_key_freed_after_forget
+  :: forall v.
+     (DSIGNMAlgorithm v
+     )
+  => Proxy v
+  -> PinnedSizedBytes (SeedSizeDSIGN v)
+  -> Property
+prop_key_freed_after_forget _ seedPSB =
+  ioProperty . withMLockedSeedFromPSB seedPSB $ \seed -> do
+    accumVar <- newIORef []
+    let tracer = eventTracer accumVar
+    let allocator = mkLoggingAllocator tracer mlockedMalloc
+    -- The seed is not allocated through the log, so only the key is checked.
+    traceWith tracer $ MarkerEv "gen key"
+    sk <- genKeyDSIGNMWith @v allocator seed
+    traceWith tracer $ MarkerEv "forget key"
+    forgetSignKeyDSIGNMWith allocator sk
+    traceWith tracer $ MarkerEv "done"
+    after <- readIORef accumVar
+    let evset = matchAllocLog after
+    return $
+      counterexample ("Allocation log: " ++ show after) $
+        not (null [() | AllocEv _ <- after]) -- some allocations happened
+          && null evset -- all allocations deallocated
 
 prop_dsignm_seed_roundtrip
   :: forall v.

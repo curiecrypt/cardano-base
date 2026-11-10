@@ -30,6 +30,7 @@ module Cardano.Crypto.DSIGN.Falcon (
   VerKeyDSIGN,
   SignKeyDSIGN,
   SigDSIGN,
+  SignKeyDSIGNM (..),
 ) where
 
 #include "falcon_util.h"

@@ -12,6 +12,7 @@ import GHC.TypeLits (KnownNat)
 
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Ed25519
+import Cardano.Crypto.DSIGN.Falcon
 import Cardano.Crypto.KES.Simple
 import Cardano.Crypto.Libsodium.MLockedBytes.Internal
 import Cardano.Crypto.Libsodium.MLockedSeed
@@ -82,6 +83,12 @@ deriving via
   (MLockedSizedBytes (SignKeySizeDSIGN Ed25519DSIGN))
   instance
     EqST (SignKeyDSIGNM Ed25519DSIGN)
+
+-- Unlike Ed25519, compare the whole in-memory key, not only the seed: after
+-- the seed comes the encoded private key, which is secret key material rather
+-- than the verification key. The size is taken from the key's own type.
+instance EqST (SignKeyDSIGNM FalconDet512DSIGN) where
+  equalsM (SignKeyFalconDet512M a) (SignKeyFalconDet512M b) = mlsbEq a b
 
 instance EqST (SignKeyDSIGNM d) => EqST (SignKeyKES (SimpleKES d t)) where
   equalsM (ThunkySignKeySimpleKES a) (ThunkySignKeySimpleKES b) =

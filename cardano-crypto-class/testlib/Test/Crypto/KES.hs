@@ -24,18 +24,13 @@ module Test.Crypto.KES (
 where
 
 import qualified Data.ByteString as BS
-import qualified Data.Foldable as F (foldl')
 import Data.IORef
 import Data.Proxy (Proxy (..))
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Foreign.Ptr (WordPtr)
 import GHC.TypeNats (KnownNat, natVal)
 
 import Control.Monad (void)
 import Control.Monad.Class.MonadST
 import Control.Monad.Class.MonadThrow
-import Control.Monad.IO.Class (liftIO)
 import Control.Tracer
 
 import Cardano.Binary.FixedSizeCodec (rawDecodeFixedSized, rawEncodeFixedSized)
@@ -204,16 +199,6 @@ testKESAlloc _p n =
     describe "Low-level mlocked allocations" $ do
       -- it "updateKey" $ testMLockUpdateKeyKES _p
       it "genKey" $ testMLockGenKeyKES _p
-
-eventTracer :: IORef [event] -> Tracer IO event
-eventTracer logVar = mkTracer (\ev -> liftIO $ atomicModifyIORef' logVar (\acc -> (acc ++ [ev], ())))
-
-matchAllocLog :: [AllocEvent] -> Set WordPtr
-matchAllocLog = F.foldl' (flip go) Set.empty
-  where
-    go (AllocEv ptr) = Set.insert ptr
-    go (FreeEv ptr) = Set.delete ptr
-    go (MarkerEv _) = id
 
 testMLockGenKeyKES ::
   forall v.

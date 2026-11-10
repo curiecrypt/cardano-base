@@ -5,7 +5,12 @@
 
 module Test.Crypto.AllocLog where
 
+import Control.Monad.IO.Class (liftIO)
 import Control.Tracer
+import qualified Data.Foldable as F (foldl')
+import Data.IORef
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Foreign.Concurrent
 import Foreign.Ptr
 
@@ -36,3 +41,13 @@ mkLoggingAllocator tracer ioAllocator =
           addForeignPtrFinalizer fptr (traceWith tracer (FreeEv addr))
           return sfptr
     }
+
+eventTracer :: IORef [event] -> Tracer IO event
+eventTracer logVar = mkTracer (\ev -> liftIO $ atomicModifyIORef' logVar (\acc -> (acc ++ [ev], ())))
+
+matchAllocLog :: [AllocEvent] -> Set WordPtr
+matchAllocLog = F.foldl' (flip go) Set.empty
+  where
+    go (AllocEv ptr) = Set.insert ptr
+    go (FreeEv ptr) = Set.delete ptr
+    go (MarkerEv _) = id
