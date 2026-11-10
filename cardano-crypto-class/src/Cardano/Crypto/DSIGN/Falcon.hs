@@ -39,6 +39,7 @@ import Cardano.Binary.FixedSizeCodec (
   FixedSizeCodec (..),
   decodeFixedSized,
   encodeFixedSized,
+  fixedSize,
   guardFixedSized,
  )
 import Cardano.Crypto.DSIGN.Class (
@@ -70,8 +71,13 @@ import Cardano.Crypto.DSIGN.Class (
   encodedSigDSIGNSizeExpr,
   encodedSignKeyDSIGNSizeExpr,
   encodedVerKeyDSIGNSizeExpr,
+  genKeyDSIGNM,
   getSeedDSIGNM,
   seedSizeDSIGN,
+ )
+import Cardano.Crypto.DirectSerialise (
+  DirectDeserialise (directDeserialise),
+  DirectSerialise (directSerialise),
  )
 import Cardano.Crypto.Falcon.C (
   c_cardano_falcon_det512_derive_pubkey,
@@ -93,14 +99,17 @@ import Cardano.Crypto.Libsodium.C (c_sodium_compare)
 import Cardano.Crypto.Libsodium.MLockedSeed (
   MLockedSeed (MLockedSeed, mlockedSeedMLSB),
   mlockedSeedFinalize,
+  mlockedSeedNew,
   mlockedSeedNewWith,
   mlockedSeedUseAsCPtr,
  )
 import Cardano.Crypto.PinnedSizedBytes (
   PinnedSizedBytes,
+  psbCreate,
   psbCreateSizedResult,
   psbToByteString,
   psbUseAsCPtr,
+  psbUseAsCPtrLen,
   psbUseAsSizedPtr,
  )
 import Cardano.Crypto.Seed (getBytesFromSeedT, mkSeedFromBytes)
@@ -109,7 +118,7 @@ import Cardano.Foreign (SizedPtr (SizedPtr), allocaSized)
 import Control.DeepSeq (NFData (rnf), rwhnf)
 import Control.Monad (when, (<$!>))
 import Control.Monad.Class.MonadST (MonadST (stToIO))
-import Control.Monad.Class.MonadThrow (MonadThrow, throwIO)
+import Control.Monad.Class.MonadThrow (MonadThrow, bracket, throwIO)
 import Control.Monad.ST.Unsafe (unsafeIOToST)
 import qualified Data.ByteString as BS
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
@@ -389,3 +398,54 @@ instance
   FromCBOR (SignKeyDSIGNM FalconDet512DSIGN)
   where
   fromCBOR = error "unsupported"
+
+--
+-- Direct serialisation
+--
+
+instance DirectSerialise (SignKeyDSIGNM FalconDet512DSIGN) where
+  -- /Note:/ As for Ed25519, we only serialise the 32-byte seed, not the
+  -- 1313-byte key held in memory (the seed followed by the 1281-byte encoded
+  -- private key). The private key is redundant, since we can always
+  -- reconstruct it from the seed. This is also reflected in
+  -- 'SignKeySizeDSIGN', which equals 'SeedSizeDSIGN' == 32, rather than
+  -- reporting the in-memory size of 1313.
+  directSerialise push sk = do
+    bracket
+      (getSeedDSIGNM (Proxy @FalconDet512DSIGN) sk)
+      mlockedSeedFinalize
+      ( \seed -> mlockedSeedUseAsCPtr seed $ \ptr ->
+          push
+            (castPtr ptr)
+            (fromIntegral @Word @CSize $ seedSizeDSIGN (Proxy @FalconDet512DSIGN))
+      )
+
+instance DirectDeserialise (SignKeyDSIGNM FalconDet512DSIGN) where
+  -- /Note:/ We only serialise the 32-byte seed, and deserialising runs key
+  -- generation. See the DirectSerialise instance above.
+  directDeserialise pull = do
+    bracket
+      mlockedSeedNew
+      mlockedSeedFinalize
+      ( \seed -> do
+          mlockedSeedUseAsCPtr seed $ \ptr -> do
+            pull
+              (castPtr ptr)
+              (fromIntegral @Word @CSize $ seedSizeDSIGN (Proxy @FalconDet512DSIGN))
+          genKeyDSIGNM seed
+      )
+
+instance DirectSerialise (VerKeyDSIGN FalconDet512DSIGN) where
+  directSerialise push (VerKeyFalconDet512 psb) = do
+    psbUseAsCPtrLen psb $ \ptr _ ->
+      push
+        (castPtr ptr)
+        (fromIntegral @Word @CSize $ fixedSize (Proxy @(VerKeyDSIGN FalconDet512DSIGN)))
+
+instance DirectDeserialise (VerKeyDSIGN FalconDet512DSIGN) where
+  directDeserialise pull = do
+    psb <- psbCreate $ \ptr ->
+      pull
+        (castPtr ptr)
+        (fromIntegral @Word @CSize $ fixedSize (Proxy @(VerKeyDSIGN FalconDet512DSIGN)))
+    return $! VerKeyFalconDet512 psb
