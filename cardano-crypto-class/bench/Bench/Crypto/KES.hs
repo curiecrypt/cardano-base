@@ -17,6 +17,7 @@ import Data.Proxy
 import Control.DeepSeq
 
 import Cardano.Crypto.DSIGN.Ed25519
+import Cardano.Crypto.DSIGN.Falcon (FalconDet512DSIGN)
 import Cardano.Crypto.Hash.Blake2b
 import Cardano.Crypto.KES.Class
 import Cardano.Crypto.KES.CompactSum
@@ -49,6 +50,11 @@ benchmarks =
         , benchKES @Proxy @(Sum7KES Ed25519DSIGN Blake2b_256) Proxy "Sum7KES" msg
         , benchKES @Proxy @(CompactSum6KES Ed25519DSIGN Blake2b_256) Proxy "CompactSum6KES" msg
         , benchKES @Proxy @(CompactSum7KES Ed25519DSIGN Blake2b_256) Proxy "CompactSum7KES" msg
+        , benchKES @Proxy @(Sum6KES FalconDet512DSIGN Blake2b_256) Proxy "Sum6KES_FalconDet512" msg
+        , benchKES @Proxy @(CompactSum6KES FalconDet512DSIGN Blake2b_256)
+            Proxy
+            "CompactSum6KES_FalconDet512"
+            msg
         ]
     | msg <- [typicalMsg, testBytes]
     ]
