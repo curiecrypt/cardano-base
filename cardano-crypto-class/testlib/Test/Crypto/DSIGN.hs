@@ -812,6 +812,11 @@ testFalconRejectsMalformed name = describe name $ do
       \(msg, sk, version) ->
         let sig = onRawBytes (modifyByte 1 (const version)) (signDSIGN () msg sk)
          in verifyDSIGN () (deriveVerKeyDSIGN sk) msg sig =/= Right ()
+  prop "verification key with one bit flipped" .
+    forAllShow ((,,) <$> arbitrary @Message <*> defaultSignKeyGen @FalconDet512DSIGN <*> Gen.choose (0, 8 * vkSize - 1)) ppShow $
+      \(msg, sk, i) ->
+        let vk = onRawBytes (modifyByte (i `div` 8) (`complementBit` (i `mod` 8))) (deriveVerKeyDSIGN sk)
+         in verifyDSIGN () vk msg (signDSIGN () msg sk) =/= Right ()
   prop "verification key with a coefficient >= q" .
     forAllShow ((,) <$> arbitrary @Message <*> defaultSignKeyGen @FalconDet512DSIGN) ppShow $
       \(msg, sk) ->
@@ -821,6 +826,7 @@ testFalconRejectsMalformed name = describe name $ do
          in verifyDSIGN () vk msg (signDSIGN () msg sk) =/= Right ()
   where
     sigSize = fromIntegral @Word @Int (fixedSize (Proxy @(SigDSIGN FalconDet512DSIGN)))
+    vkSize = fromIntegral @Word @Int (fixedSize (Proxy @(VerKeyDSIGN FalconDet512DSIGN)))
 
 -- | Change the raw bytes of a value. Decoding only checks the length, so it
 -- succeeds here.
