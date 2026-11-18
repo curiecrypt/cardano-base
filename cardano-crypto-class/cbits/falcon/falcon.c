@@ -896,15 +896,15 @@ falcon_verify_finish(const void *sig, size_t sig_len, int sig_type,
 
 	/*
 	 * Hash message to point.
+	 *
+	 * cardano-base: use the variable-time hash for every format, the CT
+	 * format included. The constant-time hash only hides the hash of the
+	 * signed data, which is public in verification. Verification is about
+	 * twice as fast with the variable-time hash.
 	 */
 	shake256_flip(hash_data);
-	if (ct) {
-		Zf(hash_to_point_ct)(
-			(inner_shake256_context *)hash_data, hm, logn, atmp);
-	} else {
-		Zf(hash_to_point_vartime)(
-			(inner_shake256_context *)hash_data, hm, logn);
-	}
+	Zf(hash_to_point_vartime)(
+		(inner_shake256_context *)hash_data, hm, logn);
 
 	/*
 	 * Verify signature.

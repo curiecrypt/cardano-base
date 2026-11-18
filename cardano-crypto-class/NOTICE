@@ -27,7 +27,9 @@ cbits/falcon/deterministic512.c do not and are covered by this notice.
 Local modifications, marked "cardano-base" in the code: in
 cbits/falcon/deterministic512.c, key generation and signing wipe their
 secret scratch memory before returning; in cbits/falcon/sign.c, signing
-wipes its sampler state after each attempt.
+wipes its sampler state after each attempt; in cbits/falcon/falcon.c,
+verification uses the variable-time hash-to-point for every signature
+format.
 
    Copyright (c) 2017-2020  Falcon Project
 
