@@ -36,7 +36,9 @@ int falcon_det512_sign_compressed(void *sig, size_t *sig_len,
 
 	shake256_context detrng;
 	shake256_context hd;
-	uint8_t tmpsd[FALCON_TMPSIZE_SIGNDYN(FALCON_DET512_LOGN)];
+	// cardano-base: align the scratch memory. falcon_sign_dyn_finish reads
+	// part of it as uint16_t without aligning it first.
+	_Alignas(8) uint8_t tmpsd[FALCON_TMPSIZE_SIGNDYN(FALCON_DET512_LOGN)];
 	uint8_t logn[1] = {FALCON_DET512_LOGN};
 	uint8_t salt[40];
 
